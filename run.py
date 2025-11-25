@@ -8,7 +8,7 @@ from datetime import datetime
 
 # 页面配置
 st.set_page_config(
-    page_title="Excel数据处理器",
+    page_title="医学编码数据预处理器",
     page_icon="📊",
     layout="wide"
 )
@@ -164,7 +164,7 @@ def render_step_indicator(current_step):
     st.markdown(steps_html, unsafe_allow_html=True)
 
 # 标题
-st.markdown("<h1>📊 Excel 数据处理器</h1>", unsafe_allow_html=True)
+st.markdown("<h1>📊 医学编码数据预处理器</h1>", unsafe_allow_html=True)
 st.markdown("<p class='subtitle'>导入、配置、导出 - 轻松处理您的数据</p>", unsafe_allow_html=True)
 
 # 显示步骤指示器
@@ -368,6 +368,7 @@ elif st.session_state.step == 3:
                     'generate_indication': False,
                     'indication_config': {
                         'separator': ';',
+                        'join_separator': ';',
                         'columns': []
                     }
                 }
@@ -385,19 +386,19 @@ elif st.session_state.step == 3:
             if config['generate_route']:
                 st.markdown('<div class="config-section">', unsafe_allow_html=True)
                 config['route_config']['source_column_a'] = st.text_input(
-                    "源列A (判断列)",
+                    "给药途径列",
                     value=config['route_config']['source_column_a'],
-                    placeholder="例如: PR",
+                    placeholder="例如: 给药途径",
                     key=f"route_cola_{sheet_name}"
                 )
                 config['route_config']['source_column_b'] = st.text_input(
-                    "源列B (备用列)",
+                    "其他给药途径列",
                     value=config['route_config']['source_column_b'],
-                    placeholder="例如: AE",
+                    placeholder="例如: 若其他途径，请详述",
                     key=f"route_colb_{sheet_name}"
                 )
                 config['route_config']['condition_value'] = st.text_input(
-                    "条件值 (当列A等于此值时使用列B)",
+                    "条件值 (当给药途径列等于此值时使用其他给药途径列的值)",
                     value=config['route_config']['condition_value'],
                     placeholder="例如: 其他",
                     key=f"route_cond_{sheet_name}"
@@ -415,14 +416,28 @@ elif st.session_state.step == 3:
             )
             
             if config['generate_indication']:
+                st.info("💡 提示：在正则表达式中使用 `.+?` (非贪婪模式) 而不是 `.+` (贪婪模式)，可以避免跨越分隔符匹配过多内容。")
+            
+            if config['generate_indication']:
                 st.markdown('<div class="config-section">', unsafe_allow_html=True)
                 
-                config['indication_config']['separator'] = st.text_input(
-                    "分隔符",
-                    value=config['indication_config']['separator'],
-                    placeholder="例如: ;",
-                    key=f"indication_sep_{sheet_name}"
-                )
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    config['indication_config']['separator'] = st.text_input(
+                        "输出分隔符",
+                        value=config['indication_config']['separator'],
+                        placeholder="例如: ;",
+                        key=f"indication_sep_{sheet_name}",
+                        help="最终 INDICATION 列中各值之间的分隔符"
+                    )
+                with col_b:
+                    config['indication_config']['join_separator'] = st.text_input(
+                        "拼接分隔符",
+                        value=config['indication_config'].get('join_separator', config['indication_config']['separator']),
+                        placeholder="例如: ;",
+                        key=f"indication_join_sep_{sheet_name}",
+                        help="用于拼接所有提取值的分隔符，拼接后会按此分隔符拆分、去重、排序"
+                    )
                 
                 st.markdown("**提取列配置**")
                 
@@ -448,7 +463,7 @@ elif st.session_state.step == 3:
                         col_config['column_name'] = st.text_input(
                             "列名",
                             value=col_config['column_name'],
-                            placeholder="例如: PR",
+                            placeholder="例如: 不良事件描述、既往史描述、预防用药描述",
                             key=f"col_name_{sheet_name}_{idx}"
                         )
                     with col2:
@@ -473,7 +488,8 @@ elif st.session_state.step == 3:
                             "正则表达式",
                             value=col_config['regex_pattern'],
                             placeholder=r"例如: (\d+)#([^,;]+)",
-                            key=f"regex_{sheet_name}_{idx}"
+                            key=f"regex_{sheet_name}_{idx}",
+                            help="使用 .+? 进行非贪婪匹配，避免跨越分隔符"
                         )
                         col_config['capture_group'] = st.number_input(
                             "捕获组序号",
@@ -548,7 +564,8 @@ elif st.session_state.step == 3:
                         # 生成INDICATION列
                         if config.get('generate_indication', False):
                             indication_cfg = config['indication_config']
-                            separator = indication_cfg['separator']
+                            output_separator = indication_cfg['separator']
+                            join_separator = indication_cfg.get('join_separator', output_separator)
                             
                             def extract_indication(row):
                                 values = []
@@ -568,12 +585,14 @@ elif st.session_state.step == 3:
                                     elif col_cfg['extract_type'] == 'regex':
                                         pattern = col_cfg['regex_pattern'] or r'(\d+)#([^,;]+)'
                                         capture_group = int(col_cfg['capture_group'])
-                                        matches = re.findall(pattern, cell_value)
-                                        for match in matches:
-                                            if isinstance(match, tuple) and len(match) >= capture_group:
-                                                values.append(match[capture_group - 1].strip())
-                                            elif isinstance(match, str):
-                                                values.append(match.strip())
+                                        
+                                        # 使用 finditer 进行全局匹配
+                                        for match in re.finditer(pattern, cell_value):
+                                            groups = match.groups()
+                                            if len(groups) >= capture_group:
+                                                extracted_value = groups[capture_group - 1].strip()
+                                                if extracted_value:
+                                                    values.append(extracted_value)
                                     
                                     elif col_cfg['extract_type'] == 'conditional':
                                         cond_col = col_cfg['conditional_column']
@@ -586,9 +605,21 @@ elif st.session_state.step == 3:
                                                 if map_value:
                                                     values.append(map_value)
                                 
-                                # 去重、排序、拼接
-                                unique_values = sorted(set(values))
-                                return separator.join(unique_values)
+                                # 处理流程：拼接 → 拆分 → 去重 → 排序 → 输出
+                                if not values:
+                                    return ''
+                                
+                                # 1. 用拼接分隔符拼接所有值
+                                combined = join_separator.join(values)
+                                
+                                # 2. 按拼接分隔符拆分
+                                split_values = [v.strip() for v in combined.split(join_separator) if v.strip()]
+                                
+                                # 3. 去重并排序
+                                unique_sorted_values = sorted(set(split_values))
+                                
+                                # 4. 用输出分隔符拼接
+                                return output_separator.join(unique_sorted_values)
                             
                             df['INDICATION'] = df.apply(extract_indication, axis=1)
                         
@@ -599,7 +630,13 @@ elif st.session_state.step == 3:
                 
                 # 提供下载
                 original_name = st.session_state.uploaded_file.name
-                new_name = original_name.replace('.xlsx', '_processed.xlsx').replace('.xls', '_processed.xlsx')
+                # 正确处理文件后缀
+                if original_name.endswith('.xlsx'):
+                    new_name = original_name.replace('.xlsx', '_processed.xlsx')
+                elif original_name.endswith('.xls'):
+                    new_name = original_name.replace('.xls', '_processed.xlsx')
+                else:
+                    new_name = original_name + '_processed.xlsx'
                 
                 st.download_button(
                     label="⬇️ 下载处理后的文件",
