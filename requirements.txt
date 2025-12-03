@@ -1,0 +1,8 @@
+streamlit
+pandas
+io
+json
+re
+typing
+datetime
+openpyxl
