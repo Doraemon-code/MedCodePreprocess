@@ -178,10 +178,10 @@ def extract_value(row, extract_type, extract_value_type, extract_value, regex_pa
             source_value = str(source_value)
     
     # 根据提取方式处理
-    if extract_type == "直接取出":
+    if extract_type == "直接提取":
         return [source_value] if source_value else []
     
-    elif extract_type == "正则取出":
+    elif extract_type == "正则提取":
         if not regex_pattern or not source_value:
             return []
         
