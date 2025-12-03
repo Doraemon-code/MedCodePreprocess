@@ -218,7 +218,7 @@ def process_variable_rules(row, rules, separator):
             # 提取值
             extracted = extract_value(
                 row,
-                rule.get('extract_type', '直接取出'),
+                rule.get('extract_type', '直接提取'),
                 rule.get('extract_value_type', '从列提取'),
                 rule.get('extract_value', ''),
                 rule.get('regex_pattern', ''),
@@ -425,7 +425,7 @@ if st.session_state.excel_data is not None:
                                     'condition_column': '',
                                     'condition_operator': '=',
                                     'condition_value': '',
-                                    'extract_type': '直接取出',
+                                    'extract_type': '直接提取',
                                     'extract_value_type': '从列提取',
                                     'extract_value': '',
                                     'regex_pattern': '',
@@ -444,7 +444,7 @@ if st.session_state.excel_data is not None:
                                 cond_col = rule.get('condition_column', '')
                                 cond_op = rule.get('condition_operator', '=')
                                 cond_val = rule.get('condition_value', '')
-                                ext_type = rule.get('extract_type', '直接取出')
+                                ext_type = rule.get('extract_type', '直接提取')
                                 ext_val_type = rule.get('extract_value_type', '从列提取')
                                 ext_val = rule.get('extract_value', '')
                                 
@@ -459,7 +459,7 @@ if st.session_state.excel_data is not None:
                                 else:
                                     rule_text += f'{ext_val}'
                                 
-                                if ext_type == "正则取出":
+                                if ext_type == "正则提取":
                                     regex = rule.get('regex_pattern', '')
                                     cap_grp = rule.get('capture_group', 1)
                                     rule_text += f" (模式: {regex}, 组{cap_grp})"
@@ -514,8 +514,8 @@ if st.session_state.excel_data is not None:
                                 col1, col2 = st.columns(2)
                                 
                                 with col1:
-                                    extract_types = ["直接取出", "正则取出"]
-                                    current_ext = rule.get('extract_type', '直接取出')
+                                    extract_types = ["直接提取", "正则提取"]
+                                    current_ext = rule.get('extract_type', '直接提取')
                                     rule['extract_type'] = st.selectbox(
                                         "提取方式",
                                         options=extract_types,
@@ -550,7 +550,7 @@ if st.session_state.excel_data is not None:
                                     )
                                 
                                 # 正则配置
-                                if rule['extract_type'] == "正则取出":
+                                if rule['extract_type'] == "正则提取":
                                     col1, col2 = st.columns([3, 1])
                                     with col1:
                                         rule['regex_pattern'] = st.text_input(
