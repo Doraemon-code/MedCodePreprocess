@@ -1,0 +1,112 @@
+{
+  "测试1": {
+    "sheet_variables": {
+      "系统变量": {},
+      "数据范围": {},
+      "eCRF表单": {},
+      "AH": {},
+      "MH": {},
+      "AE": {},
+      "CM": {
+        "CMTRT": {
+          "separator": ";",
+          "rules": [
+            {
+              "condition_column": "CMDECOD",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "AI提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "CMDECOD",
+              "regex_pattern": "",
+              "capture_group": 1
+            }
+          ]
+        },
+        "ROUTE": {
+          "separator": ";",
+          "rules": [
+            {
+              "condition_column": "CMROUTEO",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "直接提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "CMROUTEO",
+              "regex_pattern": "",
+              "capture_group": 1
+            },
+            {
+              "condition_column": "CMROUTEO",
+              "condition_operator": "=",
+              "condition_value": "",
+              "extract_type": "直接提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "CMROUTE_DEC",
+              "regex_pattern": "",
+              "capture_group": 1
+            }
+          ]
+        },
+        "INDICATION": {
+          "separator": ";",
+          "rules": [
+            {
+              "condition_column": "AENO",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "正则提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "AENO",
+              "regex_pattern": "\\d+;(.+?);(\\d{4}|uk|UK)-(\\d{2}|uk|UK)-(\\d{2}|uk|UK)",
+              "capture_group": 1
+            },
+            {
+              "condition_column": "MHNO",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "正则提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "MHNO",
+              "regex_pattern": "\\d+;(.+?);(\\d{4}|uk|UK)-(\\d{2}|uk|UK)-(\\d{2}|uk|UK)",
+              "capture_group": 1
+            },
+            {
+              "condition_column": "CMRES_3_DEC",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "直接提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "CMRES_3_DEC",
+              "regex_pattern": "",
+              "capture_group": 1
+            },
+            {
+              "condition_column": "CMRES_4_DEC",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "直接提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "CMRES_4_DEC",
+              "regex_pattern": "",
+              "capture_group": 1
+            },
+            {
+              "condition_column": "RESOT",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "直接提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "RESOT",
+              "regex_pattern": "",
+              "capture_group": 1
+            }
+          ]
+        }
+      },
+      "CMH": {},
+      "eCRF备注日志": {}
+    },
+    "saved_time": "2025-12-14 19:13:21"
+  }
+}
