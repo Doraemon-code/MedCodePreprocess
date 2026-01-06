@@ -108,5 +108,44 @@
       "eCRF备注日志": {}
     },
     "saved_time": "2025-12-14 19:13:21"
+  },
+  "test": {
+    "sheet_variables": {
+      "WHODRrugResult": {
+        "Verbatim": {
+          "separator": ";",
+          "rules": [
+            {
+              "condition_column": "药物通用名",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "AI提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "药物通用名",
+              "regex_pattern": "",
+              "capture_group": 1
+            }
+          ]
+        }
+      },
+      "test1": {
+        "Verbatim": {
+          "separator": ";",
+          "rules": [
+            {
+              "condition_column": "药物通用名",
+              "condition_operator": "<>",
+              "condition_value": "",
+              "extract_type": "AI提取",
+              "extract_value_type": "从列提取",
+              "extract_value": "药物通用名",
+              "regex_pattern": "",
+              "capture_group": 1
+            }
+          ]
+        }
+      }
+    },
+    "saved_time": "2026-01-06 22:59:11"
   }
 }

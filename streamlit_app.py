@@ -1,13 +1,15 @@
 import streamlit as st
 import pandas as pd
+import html
 import io
-import json
-import re
 import time
 import logging
-from datetime import datetime
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
-from openai import OpenAI
+
+from app.ai_extractor import ai_extract_batch
+from app.config_store import load_all_configs, save_current_config, load_config, delete_config
+from app.rules import evaluate_condition, extract_value, process_variable_rules
+from app.settings import AI_CONFIG
 
 # ==================== 日志配置 ====================
 logging.basicConfig(
@@ -20,20 +22,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MAX_UI_LOG_LINES = 200
+
+
+class UILogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            message = self.format(record)
+            logs = st.session_state.get("ui_logs")
+            if logs is None:
+                st.session_state.ui_logs = []
+                logs = st.session_state.ui_logs
+            logs.append(message)
+            if len(logs) > MAX_UI_LOG_LINES:
+                del logs[: len(logs) - MAX_UI_LOG_LINES]
+        except Exception:
+            pass
+
+
+root_logger = logging.getLogger()
+if not any(getattr(h, "name", "") == "ui_log_handler" for h in root_logger.handlers):
+    ui_handler = UILogHandler()
+    ui_handler.name = "ui_log_handler"
+    ui_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    root_logger.addHandler(ui_handler)
+
 logger.info("=" * 80)
 logger.info("程序启动")
 logger.info("=" * 80)
 
-# ==================== AI配置（硬编码） ====================
-AI_CONFIG = {
-    "API_KEY": "sk-76b43a060c0c4db9b3e52555a5c4338f",
-    "BASE_URL": "https://api.deepseek.com",
-    "MODEL": "deepseek-chat",
-    "BATCH_SIZE": 25,
-    "TEMPERATURE": 0,
-    "SLEEP_TIME": 0.5
-}
-
+# ==================== AI配置 ====================
 logger.info(f"AI配置加载完成: MODEL={AI_CONFIG['MODEL']}, BASE_URL={AI_CONFIG['BASE_URL']}")
 
 # 页面配置
@@ -99,6 +117,26 @@ st.markdown("""
         font-size: 0.9rem;
         color: #374151;
     }
+    .log-panel {
+        max-height: 340px;
+        min-height: 260px;
+        overflow-y: auto;
+        background: rgba(255, 255, 255, 0.85);
+        color: #1f2937;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.8rem;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(79, 70, 229, 0.18);
+        box-shadow: 0 6px 16px rgba(31, 41, 55, 0.08);
+        white-space: pre-wrap;
+    }
+    @media (max-width: 768px) {
+        .log-panel {
+            max-height: 260px;
+            min-height: 200px;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,286 +153,44 @@ if 'selected_sheets' not in st.session_state:
 if 'sheet_variables' not in st.session_state:
     st.session_state.sheet_variables = {}
     logger.info("初始化 session_state: sheet_variables")
+if 'ai_cache' not in st.session_state:
+    st.session_state.ai_cache = {}
+    logger.info("初始化 session_state: ai_cache")
+if 'ui_logs' not in st.session_state:
+    st.session_state.ui_logs = []
+    logger.info("初始化 session_state: ui_logs")
 
-# ==================== AI提取功能 ====================
 
-def ai_extract_batch(values, column_name="未知列"):
-    """使用AI提取药物成分（单批次）"""
-    logger.info(f"AI提取批次 - 列名: {column_name}, 数据量: {len(values)}")
-    
-    if not AI_CONFIG["API_KEY"]:
-        logger.error("AI提取失败: API_KEY未设置")
-        raise RuntimeError("DEEPSEEK_API_KEY 未设置")
-    
-    try:
-        client = OpenAI(api_key=AI_CONFIG["API_KEY"], base_url=AI_CONFIG["BASE_URL"])
-        logger.info(f"OpenAI客户端初始化成功")
-    except Exception as e:
-        logger.error(f"OpenAI客户端初始化失败: {str(e)}")
-        raise
-    
-    instr = """你是一个具备多年医药行业经验的医药专家。任务：从每行药物名称中提取【核心成分】或【通用名】，以方便后续的医学编码的匹配工作，主要不要擅自添加信息。
-你需要严格遵守以下规则：
-1. 严格保持输出行数与输入行数一致；
-2. 如果无法提取或当前行为空，必须输出原始结果；
-3. 不要输出解释，只输出结果；
-4. 只输出提取后的结果，示例只是为了方便理解所有输入和输出同时给出，如左氨氯地平片，应该输出：左氨氯地平，而不应该是：氨基葡萄糖或左氨氯地平片 -- 左氨氯地平。
-5. 大部分药物名称可能会包含一定程度的剂型信息,剂量信息或者给药途径的信息，你需要根据上下文理解并提取核心成分或通用名。
-6. 注意不要省略盐基成分，如硫酸氨基葡萄糖片，应该输出：硫酸氨基葡萄糖，而不应该是：氨基葡萄糖
-
-以下是提取示例：
-苯磺酸左氨氯地平片 -- 苯磺酸左氨氯地平片
-硫酸氨基葡萄糖片 -- 硫酸氨基葡萄糖
-裸花紫珠片 -- 裸花紫珠
-康复新液 -- 康复新
-头孢呋辛片 -- 头孢呋辛
-膏药 -- 膏药
-注射液用核黄素磷酸钠 -- 核黄素磷酸钠
-吸入用布地奈德混悬液 -- 布地奈德
-吸入用乙酰半胱氨酸溶液 -- 乙酰半胱氨酸
-地塞米松磷酸钠涂剂 -- 地塞米松磷酸钠
-精蛋白锌重组赖脯胰岛素混合注射液 -- 精蛋白锌重组赖脯胰岛素
-非那雄胺片 -- 非那雄胺
-坦索罗辛缓释胶囊 -- 坦索罗辛
-碳酸钙D3颗粒（Ⅱ） -- 碳酸钙D3
-维生素D滴剂（胶囊型） -- 维生素D
-左氨氯地平片 -- 左氨氯地平
-缬沙坦胶囊 -- 缬沙坦
-0.9%氯化钠注射液 -- 氯化钠
-艾瑞昔布 -- 艾瑞昔布
-阿司匹林 -- 阿司匹林
-中药 -- 中药
-"""
-    
-    # 预处理数据
-    orig = [str(v) if v is not None else "" for v in values]
-    proc = [v if v.strip() else "N/A" for v in orig]
-    
-    logger.info(f"数据预处理完成: 有效数据={len([x for x in proc if x != 'N/A'])}, 空数据={len([x for x in proc if x == 'N/A'])}")
-    
-    user_content = "请提取以下数据的成分，严格按行对应输出：\n" + "\n".join(proc)
-    
-    try:
-        logger.info(f"开始调用AI API")
-        start_time = time.time()
-        
-        resp = client.chat.completions.create(
-            model=AI_CONFIG["MODEL"],
-            messages=[
-                {"role": "system", "content": instr},
-                {"role": "user", "content": user_content},
-            ],
-            stream=False,
-            temperature=AI_CONFIG["TEMPERATURE"]
-        )
-        
-        elapsed_time = time.time() - start_time
-        logger.info(f"AI API调用成功, 耗时: {elapsed_time:.2f}秒")
-        
-        content = resp.choices[0].message.content if resp and resp.choices else ""
-        lines = [str(l).strip() for l in str(content).splitlines()]
-        
-        logger.info(f"AI返回行数: {len(lines)}, 预期行数: {len(orig)}")
-        
-        # 补齐行数
-        if len(lines) < len(orig):
-            shortage = len(orig) - len(lines)
-            logger.warning(f"返回行数不足，补齐 {shortage} 行空值")
-            lines.extend([""] * shortage)
-        
-        # 归一化结果
-        norm = []
-        for i, x in enumerate(lines[:len(orig)]):
-            if x == "N/A" or not x:
-                norm.append(orig[i])
-            else:
-                norm.append(x)
-        
-        logger.info(f"批次处理完成, 结果数: {len(norm)}")
-        return norm
-        
-    except Exception as e:
-        logger.error(f"AI API调用失败: {str(e)}", exc_info=True)
-        logger.info(f"使用原始数据作为后备")
-        return orig
-
-# ==================== 配置管理功能 ====================
-
-def load_all_configs():
-    logger.info("尝试加载所有配置")
-    try:
-        with open('excel_processor_configs.json', 'r', encoding='utf-8') as f:
-            configs = json.load(f)
-            logger.info(f"配置加载成功: 共 {len(configs)} 个配置")
-            return configs
-    except FileNotFoundError:
-        logger.warning("配置文件不存在，返回空配置")
-        return {}
-    except Exception as e:
-        logger.error(f"配置加载失败: {str(e)}", exc_info=True)
-        return {}
-
-def save_all_configs(all_configs):
-    logger.info(f"尝试保存配置: 共 {len(all_configs)} 个")
-    try:
-        with open('excel_processor_configs.json', 'w', encoding='utf-8') as f:
-            json.dump(all_configs, f, ensure_ascii=False, indent=2)
-        logger.info("配置保存成功")
-        return True
-    except Exception as e:
-        logger.error(f"配置保存失败: {str(e)}", exc_info=True)
-        st.error(f"保存失败: {str(e)}")
-        return False
-
-def save_current_config(config_name):
-    logger.info(f"保存当前配置: {config_name}")
-    all_configs = load_all_configs()
-    all_configs[config_name] = {
-        'sheet_variables': st.session_state.sheet_variables,
-        'saved_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    result = save_all_configs(all_configs)
-    if result:
-        logger.info(f"配置 '{config_name}' 保存成功")
-    return result
-
-def load_config(config_name):
-    logger.info(f"加载配置: {config_name}")
-    all_configs = load_all_configs()
-    if config_name in all_configs:
-        st.session_state.sheet_variables = all_configs[config_name]['sheet_variables']
-        logger.info(f"配置 '{config_name}' 加载成功")
-        return True
-    logger.warning(f"配置 '{config_name}' 不存在")
-    return False
-
-def delete_config(config_name):
-    logger.info(f"删除配置: {config_name}")
-    all_configs = load_all_configs()
-    if config_name in all_configs:
-        del all_configs[config_name]
-        result = save_all_configs(all_configs)
-        if result:
-            logger.info(f"配置 '{config_name}' 删除成功")
-        return result
-    logger.warning(f"配置 '{config_name}' 不存在，无需删除")
-    return False
-
-# ==================== 通用数据提取函数 ====================
-
-def evaluate_condition(row_value, operator, compare_value):
-    """评估条件是否满足"""
-    if pd.isna(row_value):
-        row_value = ""
+def render_log_panel(placeholder):
+    logs = st.session_state.get("ui_logs", [])
+    if logs:
+        content = "\n".join(logs[-MAX_UI_LOG_LINES:])
     else:
-        row_value = str(row_value)
-    
-    compare_value = str(compare_value) if compare_value is not None else ""
-    
-    if operator == "=":
-        return row_value == compare_value
-    elif operator == "<>":
-        return row_value != compare_value
-    elif operator == "包含":
-        return compare_value in row_value
-    elif operator == "不包含":
-        return compare_value not in row_value
-    elif operator == ">":
-        try:
-            return float(row_value) > float(compare_value)
-        except:
-            return False
-    elif operator == "<":
-        try:
-            return float(row_value) < float(compare_value)
-        except:
-            return False
-    elif operator == ">=":
-        try:
-            return float(row_value) >= float(compare_value)
-        except:
-            return False
-    elif operator == "<=":
-        try:
-            return float(row_value) <= float(compare_value)
-        except:
-            return False
-    return False
+        content = "暂无日志"
+    placeholder.markdown(
+        f"<div class='log-panel'>{html.escape(content)}</div>",
+        unsafe_allow_html=True,
+    )
 
-def extract_value(row, extract_type, extract_value_type, extract_value, regex_pattern=None, capture_group=1):
-    """根据提取方式提取值"""
-    if extract_value_type == "固定文本":
-        source_value = extract_value
-    else:
-        if extract_value not in row.index:
-            return []
-        source_value = row[extract_value]
-        if pd.isna(source_value):
-            source_value = ""
-        else:
-            source_value = str(source_value)
-    
-    if extract_type == "直接提取":
-        return [source_value] if source_value else []
-    
-    elif extract_type == "正则提取":
-        if not regex_pattern or not source_value:
-            return []
-        
-        results = []
-        try:
-            for match in re.finditer(regex_pattern, source_value):
-                groups = match.groups()
-                if len(groups) >= capture_group:
-                    extracted = groups[capture_group - 1].strip()
-                    if extracted:
-                        results.append(extracted)
-        except Exception as e:
-            logger.error(f"正则表达式错误: {str(e)}")
-            st.warning(f"正则表达式错误: {str(e)}")
-        
-        return results
-    
-    elif extract_type == "AI提取":
-        return [source_value] if source_value else []
-    
-    return []
-
-def process_variable_rules(row, rules, separator):
-    """处理一个变量的所有规则（非AI提取）"""
-    all_values = []
-    
-    for rule in rules:
-        condition_column = rule.get('condition_column', '')
-        condition_operator = rule.get('condition_operator', '=')
-        condition_value = rule.get('condition_value', '')
-        
-        if not condition_column or condition_column not in row.index:
-            continue
-        
-        if evaluate_condition(row[condition_column], condition_operator, condition_value):
-            extracted = extract_value(
-                row,
-                rule.get('extract_type', '直接提取'),
-                rule.get('extract_value_type', '从列提取'),
-                rule.get('extract_value', ''),
-                rule.get('regex_pattern', ''),
-                rule.get('capture_group', 1)
-            )
-            all_values.extend(extracted)
-    
-    if not all_values:
-        return ''
-    
-    combined = separator.join(all_values)
-    split_values = [v.strip() for v in combined.split(separator) if v.strip()]
-    unique_sorted = sorted(set(split_values))
-    
-    return separator.join(unique_sorted)
 
 # ==================== 侧边栏：配置管理 ====================
 
 with st.sidebar:
+    st.markdown("### 🤖 AI设置")
+    model_options = ["deepseek-chat", "deepseek-reasoner"]
+    default_model = AI_CONFIG["MODEL"] if AI_CONFIG["MODEL"] in model_options else model_options[0]
+    if "ai_model" not in st.session_state:
+        st.session_state.ai_model = default_model
+    selected_model = st.selectbox(
+        "模型",
+        options=model_options,
+        index=model_options.index(st.session_state.ai_model),
+        key="ai_model",
+    )
+    if selected_model != AI_CONFIG["MODEL"]:
+        AI_CONFIG["MODEL"] = selected_model
+        logger.info("AI模型切换为: %s", selected_model)
+
     st.markdown("### 💾 配置管理")
     
     with st.expander("保存当前配置", expanded=False):
@@ -445,11 +241,11 @@ with st.sidebar:
 st.markdown("<h1>📊 医学编码数据预处理器</h1>", unsafe_allow_html=True)
 st.markdown("<p class='subtitle'>导入、配置、导出 - 轻松处理您的数据（含AI提取）</p>", unsafe_allow_html=True)
 
-# ==================== 布局：上传区域（居中） ====================
+# ==================== 布局：上传区域 + 日志面板 ====================
 
-col_left, col_center, col_right = st.columns([1, 2, 1])
+col_upload, col_log = st.columns([1, 1])
 
-with col_center:
+with col_upload:
     st.markdown("<div class='section-header'>📁 上传 Excel 文件</div>", unsafe_allow_html=True)
     uploaded_file = st.file_uploader(
         "选择Excel文件",
@@ -457,28 +253,33 @@ with col_center:
         help="支持 .xlsx 和 .xls 格式",
         label_visibility="collapsed"
     )
-    
+
     if uploaded_file is not None:
         logger.info(f"用户上传文件: {uploaded_file.name}")
         try:
             excel_file = pd.ExcelFile(uploaded_file)
             st.session_state.uploaded_file = uploaded_file
             st.session_state.excel_data = excel_file
-            
+
             logger.info(f"Excel文件读取成功: {len(excel_file.sheet_names)} 个工作表")
             logger.info(f"工作表列表: {excel_file.sheet_names}")
-            
+
             if not st.session_state.selected_sheets:
                 st.session_state.selected_sheets = {
                     sheet: True for sheet in excel_file.sheet_names
                 }
                 logger.info("默认选中所有工作表")
-            
+
             st.success(f"✅ 成功加载: {uploaded_file.name} ({len(excel_file.sheet_names)} 个工作表)")
-            
+
         except Exception as e:
             logger.error(f"文件读取失败: {str(e)}", exc_info=True)
             st.error(f"❌ 文件读取失败: {str(e)}")
+
+with col_log:
+    st.markdown("<div class='section-header'>🧾 实时日志</div>", unsafe_allow_html=True)
+    log_panel_placeholder = st.empty()
+    render_log_panel(log_panel_placeholder)
 
 st.markdown("---")
 
@@ -747,6 +548,7 @@ if st.session_state.excel_data is not None:
             logger.info("=" * 80)
             logger.info("开始处理并导出")
             logger.info("=" * 80)
+            render_log_panel(log_panel_placeholder)
             
             try:
                 output = io.BytesIO()
@@ -822,8 +624,14 @@ if st.session_state.excel_data is not None:
                                                 batch_row_indices = row_indices[start_idx:end_idx]
                                                 
                                                 logger.info(f"      批次 {batch_idx + 1}/{total_batches}")
+                                                render_log_panel(log_panel_placeholder)
                                                 
-                                                extracted = ai_extract_batch(batch_values, f"{var_name}.{source_col}")
+                                                extracted = ai_extract_batch(
+                                                    batch_values,
+                                                    f"{var_name}.{source_col}",
+                                                    cache=st.session_state.ai_cache,
+                                                )
+                                                render_log_panel(log_panel_placeholder)
                                                 
                                                 for row_idx, result in zip(batch_row_indices, extracted):
                                                     ai_results[row_idx] = result

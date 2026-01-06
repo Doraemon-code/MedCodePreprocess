@@ -3,10 +3,10 @@ import time
 from openai import OpenAI
 import pandas as pd
 
-df = pd.read_excel(r"C:\Users\WeiQ\Desktop\Raw_20240919.xlsx", sheet_name="CM")
-list = df["CMDECOD"].tolist()
+df = pd.read_excel(r"C:\Users\WeiQ\Desktop\test.xlsx", sheet_name="WHODRrugResult")
+list = df["药物通用名"].tolist()
 print(list)
-API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-76b43a060c0c4db9b3e52555a5c4338f")
+API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-97c1523049f1427cb9379b082069e97a")
 BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
@@ -19,8 +19,8 @@ def ai_extract(values):
         你需要严格遵守以下规则：
         1. 严格保持输出行数与输入行数一致；
         2. 如果无法提取或当前行为空，必须输出原始结果；
-        3. 不要输出解释，只输出结果；
-        4. 只输出提取后的结果，示例只是为了方便理解所有输入和输出同时给出。
+        3. 不要输出解释，只输出json结果；
+        4. 只输出提取后的结果以及对应的行号，示例只是为了方便理解所有输入和输出同时给出。
         5. 大部分药物名称可能会包含一定程度的剂型信息,剂量信息或者给药途径的信息，你需要根据上下文理解并提取核心成分或通用名。
 
         以下是提取示例：
@@ -58,6 +58,7 @@ def ai_extract(values):
                 {"role": "system", "content": instr},
                 {"role": "user", "content": user_content},
             ],
+            response_format={"type": "json_object"},
             stream=False,
             temperature=0
         )
